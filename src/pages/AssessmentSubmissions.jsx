@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { assessmentService } from '../services/assessmentService';
 import { userService } from '../services/userService';
+import { analyticsService } from '../services/analyticsService';
 import { ArrowLeft, User, Calendar, CheckCircle, Clock, Award, Send, Eye, Download, TrendingUp, XCircle, Check, X, Search, Filter } from 'lucide-react';
 
 const AssessmentSubmissions = () => {
@@ -17,42 +18,7 @@ const AssessmentSubmissions = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [filterStatus, setFilterStatus] = useState('ALL');
 
-    // Mock questions for demo
-    const mockQuestions = [
-        {
-            id: 1,
-            question: "Qu'est-ce qu'une architecture microservices ?",
-            options: [
-                "Une architecture monolithique",
-                "Une architecture composée de services indépendants",
-                "Un framework JavaScript",
-                "Un outil de déploiement"
-            ],
-            correctAnswer: 1
-        },
-        {
-            id: 2,
-            question: "Quel est l'avantage principal des microservices ?",
-            options: [
-                "Complexité réduite",
-                "Scalabilité et indépendance des services",
-                "Moins de code",
-                "Pas besoin de tests"
-            ],
-            correctAnswer: 1
-        },
-        {
-            id: 3,
-            question: "Qu'est-ce qu'une API Gateway ?",
-            options: [
-                "Un serveur de base de données",
-                "Un point d'entrée unique pour les microservices",
-                "Un langage de programmation",
-                "Un système d'exploitation"
-            ],
-            correctAnswer: 1
-        }
-    ];
+    const [isAiGrading, setIsAiGrading] = useState(false);
 
     useEffect(() => {
         loadData();
@@ -120,16 +86,39 @@ const AssessmentSubmissions = () => {
     };
 
     const handleViewDetails = (submission) => {
-        const mockAnswers = mockQuestions.map((q, idx) => ({
-            questionId: q.id,
-            selectedAnswer: Math.floor(Math.random() * q.options.length),
-            isCorrect: Math.random() > 0.3
-        }));
+        let realAnswers = [];
+        try {
+            realAnswers = typeof submission.answers === 'string'
+                ? JSON.parse(submission.answers)
+                : (submission.answers || []);
+        } catch (e) {
+            console.error("Error parsing answers:", e);
+        }
 
         setViewingSubmission({
             ...submission,
-            answers: mockAnswers
+            answers: realAnswers
         });
+    };
+
+    const handleAiAssist = async () => {
+        if (!gradingSubmission) return;
+        setIsAiGrading(true);
+        try {
+            const aiFeedback = await analyticsService.getAiGradingFeedback(
+                gradingSubmission.marksObtained || 0,
+                assessment.maxMarks,
+                assessment.title
+            );
+            setGradeForm(prev => ({
+                ...prev,
+                feedback: aiFeedback
+            }));
+        } catch (error) {
+            console.error(error);
+        } finally {
+            setIsAiGrading(false);
+        }
     };
 
     const submitGrade = async (e) => {
@@ -207,13 +196,46 @@ const AssessmentSubmissions = () => {
         const graded = submissions.filter(s => s.submissionStatus === 'GRADED');
         const scores = graded.map(s => s.marksObtained);
 
+        // --- V3 QUESTION ANALYTICS ---
+        const questionStats = [];
+        if (assessment?.questions && submissions.length > 0) {
+            assessment.questions.forEach((q, qIdx) => {
+                let failCount = 0;
+                let totalAnswered = 0;
+
+                submissions.forEach(sub => {
+                    let subAnswers = [];
+                    try {
+                        subAnswers = typeof sub.answers === 'string' ? JSON.parse(sub.answers) : (sub.answers || []);
+                    } catch (e) { }
+
+                    const ans = subAnswers.find(a => a.questionId === q.id) || subAnswers[qIdx];
+                    if (ans) {
+                        totalAnswered++;
+                        if (!ans.isCorrect) failCount++;
+                    }
+                });
+
+                questionStats.push({
+                    idx: qIdx,
+                    question: q.question,
+                    failRate: totalAnswered > 0 ? (failCount / totalAnswered) * 100 : 0
+                });
+            });
+        }
+
+        const topPains = [...questionStats]
+            .filter(qs => qs.failRate > 50)
+            .sort((a, b) => b.failRate - a.failRate);
+
         return {
             total: submissions.length,
             pending: submissions.filter(s => s.submissionStatus === 'SUBMITTED').length,
             graded: graded.length,
             average: graded.length > 0 ? (scores.reduce((a, b) => a + b, 0) / graded.length).toFixed(1) : 'N/A',
             highest: graded.length > 0 ? Math.max(...scores) : 'N/A',
-            lowest: graded.length > 0 ? Math.min(...scores) : 'N/A'
+            lowest: graded.length > 0 ? Math.min(...scores) : 'N/A',
+            painPoints: topPains
         };
     };
 
@@ -317,6 +339,41 @@ const AssessmentSubmissions = () => {
                         </div>
                     ))}
                 </div>
+
+                {/* V3 AI Insights Section */}
+                {stats.painPoints && stats.painPoints.length > 0 && (
+                    <div className="mb-8 bg-amber-50 border-2 border-amber-200 rounded-[2rem] p-8 animate-in slide-in-from-top-4 duration-700">
+                        <div className="flex items-center justify-between mb-6">
+                            <div className="flex items-center gap-4">
+                                <div className="p-3 bg-amber-500 text-white rounded-2xl shadow-lg shadow-amber-500/20">
+                                    <Sparkles size={24} />
+                                </div>
+                                <div>
+                                    <h3 className="text-xl font-black text-amber-900 tracking-tight uppercase">Alertes de Performance IA</h3>
+                                    <p className="text-sm font-bold text-amber-700/60 uppercase tracking-widest mt-0.5">Analyse des points de blocage collectifs</p>
+                                </div>
+                            </div>
+                            <div className="px-5 py-2 bg-amber-200/50 rounded-full text-amber-800 text-[10px] font-black uppercase tracking-widest">
+                                {stats.painPoints.length} Point(s) de vigilance
+                            </div>
+                        </div>
+
+                        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                            {stats.painPoints.slice(0, 3).map((pp, idx) => (
+                                <div key={idx} className="bg-white/80 p-5 rounded-3xl border border-amber-200 flex flex-col gap-3">
+                                    <div className="flex justify-between items-start">
+                                        <span className="h-6 w-6 rounded-lg bg-amber-100 text-amber-700 text-[10px] font-black flex items-center justify-center">Q{pp.idx + 1}</span>
+                                        <span className="text-rose-600 font-bold text-xs">{pp.failRate.toFixed(0)}% d'échec</span>
+                                    </div>
+                                    <p className="text-sm font-bold text-slate-700 line-clamp-2 leading-tight">"{pp.question}"</p>
+                                    <p className="text-[10px] text-amber-600 font-black uppercase tracking-tight mt-auto flex items-center gap-1">
+                                        💡 Conseil : Réviser le module lié
+                                    </p>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 {/* Submissions Table */}
                 <div className="bg-white rounded-2xl border-2 border-gray-100 overflow-hidden shadow-xl">
@@ -471,7 +528,7 @@ const AssessmentSubmissions = () => {
                                         Taux de réussite
                                     </p>
                                     <p className="text-lg font-bold text-purple-900 mt-2">
-                                        {viewingSubmission.answers.filter(a => a.isCorrect).length}/{mockQuestions.length}
+                                        {viewingSubmission.answers.filter(a => a.isCorrect).length}/{assessment?.questions?.length || 0}
                                     </p>
                                 </div>
                             </div>
@@ -481,9 +538,10 @@ const AssessmentSubmissions = () => {
                                 <h3 className="text-xl font-bold text-gray-900 flex items-center gap-2">
                                     <span>📝</span> Révision des réponses
                                 </h3>
-                                {mockQuestions.map((question, idx) => {
-                                    const answer = viewingSubmission.answers[idx];
-                                    const isCorrect = answer.isCorrect;
+                                {assessment?.questions?.map((question, idx) => {
+                                    const answer = viewingSubmission.answers.find(a => a.questionId === question.id) ||
+                                        viewingSubmission.answers[idx]; // Fallback if IDs mismatch
+                                    const isCorrect = answer?.isCorrect;
 
                                     return (
                                         <div key={question.id} className={`border-2 rounded-2xl p-6 ${isCorrect ? 'border-green-300 bg-green-50' : 'border-red-300 bg-red-50'}`}>
@@ -504,10 +562,10 @@ const AssessmentSubmissions = () => {
                                                                 <div
                                                                     key={optIdx}
                                                                     className={`p-3 rounded-xl border-2 transition-all ${isCorrectOption
-                                                                            ? 'border-green-500 bg-green-100 shadow-md'
-                                                                            : isSelected
-                                                                                ? 'border-red-500 bg-red-100'
-                                                                                : 'border-gray-200 bg-white'
+                                                                        ? 'border-green-500 bg-green-100 shadow-md'
+                                                                        : isSelected
+                                                                            ? 'border-red-500 bg-red-100'
+                                                                            : 'border-gray-200 bg-white'
                                                                         }`}
                                                                 >
                                                                     <div className="flex items-center gap-2">
@@ -573,18 +631,27 @@ const AssessmentSubmissions = () => {
                                 />
                             </div>
 
-                            <div>
-                                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                            <div className="flex justify-between items-center mb-2">
+                                <label className="block text-sm font-semibold text-gray-700">
                                     Commentaires / Feedback
                                 </label>
-                                <textarea
-                                    value={gradeForm.feedback}
-                                    onChange={(e) => setGradeForm({ ...gradeForm, feedback: e.target.value })}
-                                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
-                                    rows="4"
-                                    placeholder="Excellent travail ! Quelques points à améliorer..."
-                                />
+                                <button
+                                    type="button"
+                                    onClick={handleAiAssist}
+                                    disabled={isAiGrading}
+                                    className="text-[10px] font-black uppercase tracking-widest text-indigo-600 flex items-center gap-1 hover:bg-indigo-50 px-2 py-1 rounded-lg"
+                                >
+                                    <Sparkles size={12} className={isAiGrading ? "animate-spin" : ""} />
+                                    {isAiGrading ? "Analyse..." : "Assistant IA"}
+                                </button>
                             </div>
+                            <textarea
+                                value={gradeForm.feedback}
+                                onChange={(e) => setGradeForm({ ...gradeForm, feedback: e.target.value })}
+                                className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none transition-all"
+                                rows="4"
+                                placeholder="Excellent travail ! Quelques points à améliorer..."
+                            />
 
                             <div className="bg-blue-50 border-2 border-blue-200 rounded-xl p-4">
                                 <p className="text-sm text-blue-800 flex items-center gap-2">

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { assessmentService } from '../services/assessmentService';
 import { userService } from '../services/userService';
+import { analyticsService } from '../services/analyticsService';
 import StudentLayout from '../components/StudentLayout';
 import {
     Clock,
@@ -18,12 +19,16 @@ import {
     BarChart3,
     Zap,
     Trophy,
-    Star
+    Star,
+    Search,
+    Filter,
+    BrainCircuit,
+    Plus
 } from 'lucide-react';
 
 /**
  * Professional Assessment Center - Enterprise Learning Platform
- * Coursera-style assessment interface with comprehensive tracking
+ * Premium Interface with AI Generation & Advanced Filtering
  */
 const StudentAssessments = () => {
     const { courseId } = useParams();
@@ -31,6 +36,14 @@ const StudentAssessments = () => {
     const [assessments, setAssessments] = useState([]);
     const [submissions, setSubmissions] = useState([]);
     const [loading, setLoading] = useState(true);
+
+    // Filters & Search State
+    const [searchQuery, setSearchQuery] = useState("");
+    const [filterStatus, setFilterStatus] = useState("ALL"); // ALL, PENDING, COMPLETED, GRADED
+    const [filterDifficulty, setFilterDifficulty] = useState("ALL"); // ALL, FUNDAMENTAL, INTERMEDIATE, EXPERT
+
+    // AI Generation State
+    const [isGenerating, setIsGenerating] = useState(false);
 
     useEffect(() => {
         const loadData = async () => {
@@ -50,20 +63,67 @@ const StudentAssessments = () => {
 
     const getSubmissionStatus = (assessmentId) => submissions.find(s => s.assessmentId === assessmentId) || null;
 
-    // Calculate statistics
+    // --- AI AUTO-GENERATION HANDLER ---
+    const handleGenerateAiQuiz = async () => {
+        const topic = prompt("Sur quel sujet souhaitez-vous un test ? (ex: Spring Boot, Docker, React...)");
+        if (!topic) return;
+
+        setIsGenerating(true);
+        try {
+            // 1. Génération via l'IA (Service Front-end)
+            const quizData = await analyticsService.generateQuiz(topic, "Intermédiaire");
+
+            // 2. Construction de l'objet Assessment éphémère
+            const aiAssessment = {
+                id: 'ai-generated',
+                title: `Quiz IA : ${topic} 🧠`,
+                description: `Quiz généré à la demande sur ${topic}. Testez vos connaissances instantanément.`,
+                durationMinutes: 10,
+                maxMarks: quizData.questions.length * 5, // 5 pts par question
+                questions: quizData.questions,
+                assessmentType: 'AI_PRACTICE'
+            };
+
+            // 3. Navigation vers la page de test avec les données en State
+            navigate(`/assessment/ai-generated/take`, {
+                state: { assessment: aiAssessment }
+            });
+
+        } catch (error) {
+            console.error(error);
+            alert("Erreur lors de la génération du quiz. Veuillez réessayer.");
+        } finally {
+            setIsGenerating(false);
+        }
+    };
+
+    // --- FILTERING LOGIC ---
+    const filteredAssessments = assessments.filter(assessment => {
+        const submission = getSubmissionStatus(assessment.id);
+        const status = submission ? submission.submissionStatus : 'PENDING';
+
+        // Search
+        const matchesSearch = assessment.title?.toLowerCase().includes(searchQuery.toLowerCase());
+
+        // Status Filter
+        let matchesStatus = true;
+        if (filterStatus === 'PENDING') matchesStatus = !submission;
+        if (filterStatus === 'COMPLETED') matchesStatus = submission && submission.submissionStatus === 'GRADED';
+
+        // Difficulty Filter (Mock logic based on weekNumber)
+        let matchesDifficulty = true;
+        const level = assessment.weekNumber || 1;
+        if (filterDifficulty === 'FUNDAMENTAL') matchesDifficulty = level <= 2;
+        if (filterDifficulty === 'INTERMEDIATE') matchesDifficulty = level > 2 && level <= 4;
+        if (filterDifficulty === 'EXPERT') matchesDifficulty = level > 4;
+
+        return matchesSearch && matchesStatus && matchesDifficulty;
+    });
+
     const completedCount = assessments.filter(a => {
         const sub = getSubmissionStatus(a.id);
         return sub?.submissionStatus === 'GRADED';
     }).length;
-
-    const averageScore = assessments.length > 0 ? Math.round(
-        submissions
-            .filter(s => s.submissionStatus === 'GRADED')
-            .reduce((acc, s) => {
-                const assessment = assessments.find(a => a.id === s.assessmentId);
-                return acc + (assessment ? (s.marksObtained / assessment.maxMarks) * 100 : 0);
-            }, 0) / (submissions.filter(s => s.submissionStatus === 'GRADED').length || 1)
-    ) : 0;
 
     const completionRate = assessments.length > 0
         ? Math.round((completedCount / assessments.length) * 100)
@@ -73,294 +133,198 @@ const StudentAssessments = () => {
 
     return (
         <StudentLayout>
-            <div className="px-6 lg:px-10 pb-20 space-y-8">
-                {/* Professional Header */}
-                <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-3xl p-10 lg:p-12 text-white shadow-2xl relative overflow-hidden">
-                    <div className="absolute top-0 right-0 w-96 h-96 bg-indigo-500/10 rounded-full blur-[120px] -mr-48 -mt-24"></div>
+            <div className="px-6 lg:px-10 pb-20 space-y-8 bg-[#F8FAFC] min-h-screen">
 
-                    <div className="relative z-10">
-                        <div className="flex items-center gap-2 mb-4">
-                            <Trophy size={20} className="text-amber-400" />
-                            <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Centre d'Évaluation Professionnelle</span>
-                        </div>
-                        <h1 className="text-4xl lg:text-5xl font-black tracking-tight mb-3">
-                            Évaluations & <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">Certifications</span>
-                        </h1>
-                        <p className="text-slate-300 font-medium text-base max-w-2xl">
-                            Validez vos compétences et obtenez des certifications reconnues par l'industrie
-                        </p>
+                {/* HERO SECTION - Premium AI Branding */}
+                <div className="bg-[#020617] rounded-3xl p-10 lg:p-12 text-white shadow-2xl relative overflow-hidden ring-1 ring-white/10">
+                    <div className="absolute top-0 right-0 w-[600px] h-[600px] bg-indigo-600/20 rounded-full blur-[120px] -mr-48 -mt-24 animate-pulse"></div>
+                    <div className="absolute bottom-0 left-0 w-[400px] h-[400px] bg-purple-600/10 rounded-full blur-[100px] -ml-20 -mb-20"></div>
 
-                        {/* Stats Grid */}
-                        <div className="grid grid-cols-3 gap-4 mt-8">
-                            <StatCard
-                                icon={<Target size={20} />}
-                                label="Évaluations"
-                                value={assessments.length}
-                                color="indigo"
-                            />
-                            <StatCard
-                                icon={<CheckCircle2 size={20} />}
-                                label="Complétées"
-                                value={completedCount}
-                                color="green"
-                            />
-                            <StatCard
-                                icon={<TrendingUp size={20} />}
-                                label="Score Moyen"
-                                value={`${averageScore}%`}
-                                color="purple"
-                            />
-                        </div>
-
-                        {/* Progress Bar */}
-                        <div className="mt-6">
-                            <div className="flex justify-between items-center mb-2">
-                                <span className="text-xs font-semibold text-slate-300">Taux de Complétion</span>
-                                <span className="text-sm font-bold text-white">{completionRate}%</span>
+                    <div className="relative z-10 flex flex-col lg:flex-row justify-between items-start lg:items-end gap-8">
+                        <div>
+                            <div className="flex items-center gap-2 mb-4 bg-white/5 w-fit px-4 py-1.5 rounded-full border border-white/10 backdrop-blur-md">
+                                <Sparkles size={14} className="text-amber-400" />
+                                <span className="text-[10px] font-bold text-slate-300 uppercase tracking-widest">Centre de Certification IA</span>
                             </div>
-                            <div className="h-2 bg-slate-700/50 rounded-full overflow-hidden">
-                                <div
-                                    className="h-full bg-gradient-to-r from-green-400 to-emerald-500 transition-all duration-1000"
-                                    style={{ width: `${completionRate}%` }}
-                                ></div>
-                            </div>
+                            <h1 className="text-4xl lg:text-5xl font-black tracking-tight mb-4 leading-tight">
+                                Validez vos <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">Compétences</span>
+                            </h1>
+                            <p className="text-slate-400 font-medium text-base max-w-xl leading-relaxed">
+                                Accédez à des évaluations adaptatives propulsées par l'IA.
+                                Obtenez des certifications reconnues et suivez votre progression en temps réel.
+                            </p>
                         </div>
+
+                        {/* AI Generate Button (Main Call to Action) */}
+                        <button
+                            onClick={handleGenerateAiQuiz}
+                            disabled={isGenerating}
+                            className="group relative px-8 py-4 bg-white text-slate-950 rounded-2xl font-black text-sm uppercase tracking-widest hover:bg-indigo-50 transition-all shadow-[0_0_40px_rgba(255,255,255,0.3)] hover:shadow-[0_0_60px_rgba(255,255,255,0.5)] active:scale-95 disabled:opacity-70 disabled:cursor-wait"
+                        >
+                            <span className="flex items-center gap-3 relative z-10">
+                                {isGenerating ? <BrainCircuit className="animate-spin text-indigo-600" /> : <BrainCircuit className="text-indigo-600" />}
+                                {isGenerating ? "Génération IA..." : "Générer un Test IA"}
+                            </span>
+                            <div className="absolute inset-0 bg-indigo-400/20 blur-xl group-hover:blur-2xl transition-all opacity-0 group-hover:opacity-100"></div>
+                        </button>
+                    </div>
+
+                    {/* Stats Bar */}
+                    <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-12 pt-8 border-t border-white/10">
+                        <StatItem label="Modules" value={assessments.length} icon={<BookOpen size={16} />} />
+                        <StatItem label="Validés" value={completedCount} icon={<CheckCircle2 size={16} className="text-emerald-400" />} />
+                        <StatItem label="Progression" value={`${completionRate}%`} icon={<TrendingUp size={16} className="text-indigo-400" />} />
+                        <StatItem label="Niveau" value="Intermédiaire" icon={<Award size={16} className="text-amber-400" />} />
                     </div>
                 </div>
 
-                {/* Assessment Cards Grid */}
+                {/* FILTERS & SEARCH BAR */}
+                <div className="flex flex-col lg:flex-row gap-4 items-center justify-between sticky top-4 z-30 bg-white/80 p-4 rounded-2xl backdrop-blur-xl border border-white/40 shadow-sm">
+                    <div className="relative w-full lg:w-96">
+                        <Search size={18} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                        <input
+                            type="text"
+                            placeholder="Rechercher une évaluation..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm font-bold text-slate-700 placeholder:font-medium transition-all"
+                        />
+                    </div>
+
+                    <div className="flex gap-2 overflow-x-auto w-full lg:w-auto pb-2 lg:pb-0 custom-scrollbar">
+                        <FilterPill label="Tous" active={filterStatus === 'ALL'} onClick={() => setFilterStatus('ALL')} />
+                        <FilterPill label="À Faire" active={filterStatus === 'PENDING'} onClick={() => setFilterStatus('PENDING')} icon={<Target size={14} />} />
+                        <FilterPill label="Validés" active={filterStatus === 'COMPLETED'} onClick={() => setFilterStatus('COMPLETED')} icon={<CheckCircle2 size={14} />} />
+                        <div className="w-px bg-slate-200 mx-2"></div>
+                        <select
+                            value={filterDifficulty}
+                            onChange={(e) => setFilterDifficulty(e.target.value)}
+                            className="bg-slate-50 border border-slate-200 text-slate-600 text-xs font-bold rounded-xl px-4 py-2 uppercase tracking-wide focus:outline-none"
+                        >
+                            <option value="ALL">Niveau : Tous</option>
+                            <option value="FUNDAMENTAL">Fondamental</option>
+                            <option value="INTERMEDIATE">Intermédiaire</option>
+                            <option value="EXPERT">Expert</option>
+                        </select>
+                    </div>
+                </div>
+
+                {/* ASSESSMENT GRID */}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                    {assessments.map((assessment, index) => {
-                        const submission = getSubmissionStatus(assessment.id);
-                        const isGraded = submission?.submissionStatus === 'GRADED';
-                        const isPending = submission?.submissionStatus === 'SUBMITTED';
+                    {filteredAssessments.length > 0 ? (
+                        filteredAssessments.map((assessment, index) => {
+                            const submission = getSubmissionStatus(assessment.id);
+                            const isGraded = submission?.submissionStatus === 'GRADED';
+                            const isPending = submission?.submissionStatus === 'SUBMITTED';
 
-                        return (
-                            <AssessmentCard
-                                key={assessment.id}
-                                assessment={assessment}
-                                submission={submission}
-                                isGraded={isGraded}
-                                isPending={isPending}
-                                onStart={() => navigate(`/assessment/${assessment.id}/take`)}
-                                index={index}
-                            />
-                        );
-                    })}
+                            return (
+                                <AssessmentCard
+                                    key={assessment.id}
+                                    assessment={assessment}
+                                    submission={submission}
+                                    isGraded={isGraded}
+                                    isPending={isPending}
+                                    onStart={() => navigate(`/assessment/${assessment.id}/take`)}
+                                    index={index}
+                                />
+                            );
+                        })
+                    ) : (
+                        <div className="col-span-full py-20 text-center">
+                            <div className="w-24 h-24 bg-slate-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                                <Search size={40} className="text-slate-300" />
+                            </div>
+                            <h3 className="text-lg font-bold text-slate-800">Aucun résultat trouvé</h3>
+                            <p className="text-slate-500">Essayez de modifier vos filtres ou lancez une génération IA.</p>
+                        </div>
+                    )}
                 </div>
-
-                {/* Empty State */}
-                {assessments.length === 0 && (
-                    <div className="bg-white rounded-3xl p-16 text-center border border-slate-200 shadow-sm">
-                        <BookOpen size={56} className="mx-auto text-slate-200 mb-6" />
-                        <h3 className="text-xl font-bold text-slate-800 mb-2">Aucune Évaluation Disponible</h3>
-                        <p className="text-slate-500 font-medium">Les évaluations seront disponibles au fur et à mesure de votre progression.</p>
-                    </div>
-                )}
             </div>
         </StudentLayout>
     );
 };
 
-// Stat Card Component
-const StatCard = ({ icon, label, value, color }) => {
-    const colorClasses = {
-        indigo: 'bg-indigo-500/20 text-indigo-300',
-        green: 'bg-green-500/20 text-green-300',
-        purple: 'bg-purple-500/20 text-purple-300'
-    };
+// --- SUB-COMPONENTS ---
 
-    return (
-        <div className={`${colorClasses[color]} rounded-2xl p-4 backdrop-blur-sm border border-white/10`}>
-            <div className="flex items-center gap-2 mb-2 opacity-80">
-                {icon}
-                <span className="text-[10px] font-bold uppercase tracking-wider">{label}</span>
-            </div>
-            <p className="text-3xl font-black text-white">{value}</p>
+const StatItem = ({ label, value, icon }) => (
+    <div className="flex items-center gap-4 p-4 rounded-xl bg-white/5 border border-white/5 backdrop-blur-sm">
+        <div className="p-3 bg-white/10 rounded-lg text-white">
+            {icon}
         </div>
-    );
-};
-
-// Assessment Card Component
-const AssessmentCard = ({ assessment, submission, isGraded, isPending, onStart, index }) => {
-    const getDifficultyBadge = () => {
-        const level = assessment.weekNumber || 1;
-        if (level <= 2) return { label: 'Fondamental', color: 'bg-blue-100 text-blue-700' };
-        if (level <= 4) return { label: 'Intermédiaire', color: 'bg-amber-100 text-amber-700' };
-        return { label: 'Expert', color: 'bg-red-100 text-red-700' };
-    };
-
-    const getPerformanceRating = (score, maxScore) => {
-        const percentage = (score / maxScore) * 100;
-        if (percentage >= 90) return { label: 'Excellent', color: 'text-green-600', icon: '🏆' };
-        if (percentage >= 75) return { label: 'Très Bien', color: 'text-blue-600', icon: '⭐' };
-        if (percentage >= 60) return { label: 'Bien', color: 'text-indigo-600', icon: '✓' };
-        return { label: 'À Améliorer', color: 'text-amber-600', icon: '📈' };
-    };
-
-    const difficulty = getDifficultyBadge();
-    const performance = isGraded ? getPerformanceRating(submission.marksObtained, assessment.maxMarks) : null;
-
-    return (
-        <div className="bg-white rounded-3xl border border-slate-200 p-8 shadow-lg hover:shadow-xl transition-all duration-500 overflow-hidden relative group">
-            {/* Background Decoration */}
-            <div className="absolute top-0 right-0 h-40 w-40 bg-gradient-to-br from-indigo-50 to-purple-50 rounded-bl-full opacity-40 -mr-20 -mt-20 group-hover:scale-125 transition-transform duration-700"></div>
-
-            <div className="relative z-10">
-                {/* Header */}
-                <div className="flex items-start justify-between mb-6">
-                    <div className="flex-1">
-                        <div className="flex items-center gap-2 mb-3">
-                            <span className={`px-3 py-1 ${difficulty.color} text-[10px] font-bold rounded-full uppercase tracking-wide`}>
-                                {difficulty.label}
-                            </span>
-                            <span className="px-3 py-1 bg-slate-100 text-slate-600 text-[10px] font-bold rounded-full">
-                                Module {assessment.weekNumber || 1}
-                            </span>
-                        </div>
-                        <h3 className="text-xl font-black text-slate-900 tracking-tight leading-tight mb-2">
-                            {assessment.title}
-                        </h3>
-                        <p className="text-slate-500 font-medium text-sm leading-relaxed line-clamp-2">
-                            {assessment.description || "Évaluation des compétences acquises dans ce module."}
-                        </p>
-                    </div>
-                    <StatusBadge submission={submission} />
-                </div>
-
-                {/* Metrics */}
-                <div className="grid grid-cols-3 gap-3 mb-6">
-                    <MetricBox
-                        icon={<Clock size={16} />}
-                        value={`${assessment.durationMinutes}min`}
-                        label="Durée"
-                    />
-                    <MetricBox
-                        icon={<Target size={16} />}
-                        value={assessment.maxMarks}
-                        label="Points Max"
-                    />
-                    <MetricBox
-                        icon={<Sparkles size={16} />}
-                        value={assessment.questionCount || (assessment.questions ? assessment.questions.length : 0)}
-                        label="Questions"
-                    />
-                </div>
-
-                {/* Action Area */}
-                {isGraded ? (
-                    <div className="bg-gradient-to-br from-slate-900 to-slate-800 rounded-2xl p-6 text-white">
-                        <div className="flex items-center justify-between mb-4">
-                            <div>
-                                <p className="text-[10px] font-bold uppercase tracking-widest opacity-60 mb-1">Votre Performance</p>
-                                <div className="flex items-baseline gap-2">
-                                    <span className="text-4xl font-black">{submission.marksObtained}</span>
-                                    <span className="text-lg opacity-50">/ {assessment.maxMarks}</span>
-                                </div>
-                            </div>
-                            <div className="text-right">
-                                <div className="w-16 h-16 rounded-full bg-white/10 flex items-center justify-center mb-2">
-                                    <span className="text-2xl">{performance.icon}</span>
-                                </div>
-                                <p className={`text-xs font-bold ${performance.color.replace('text-', 'text-white opacity-')}`}>
-                                    {performance.label}
-                                </p>
-                            </div>
-                        </div>
-
-                        {/* Score Percentage */}
-                        <div className="pt-4 border-t border-white/10">
-                            <div className="flex justify-between items-center mb-2">
-                                <span className="text-xs font-semibold opacity-70">Taux de Réussite</span>
-                                <span className="text-sm font-bold">{Math.round((submission.marksObtained / assessment.maxMarks) * 100)}%</span>
-                            </div>
-                            <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
-                                <div
-                                    className="h-full bg-gradient-to-r from-green-400 to-emerald-500 transition-all duration-1000"
-                                    style={{ width: `${(submission.marksObtained / assessment.maxMarks) * 100}%` }}
-                                ></div>
-                            </div>
-                        </div>
-                    </div>
-                ) : (
-                    <button
-                        onClick={onStart}
-                        disabled={isPending}
-                        className={`w-full p-5 rounded-2xl font-bold text-sm uppercase tracking-wide transition-all shadow-lg flex items-center justify-center gap-3 ${isPending
-                            ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                            : 'bg-gradient-to-r from-slate-900 to-slate-800 text-white hover:from-black hover:to-slate-900 hover:shadow-xl hover:scale-[1.02]'
-                            }`}
-                    >
-                        {isPending ? (
-                            <>
-                                <History size={20} className="animate-spin" />
-                                Correction en Cours...
-                            </>
-                        ) : (
-                            <>
-                                <Zap size={20} />
-                                Démarrer l'Évaluation
-                                <ChevronRight size={20} />
-                            </>
-                        )}
-                    </button>
-                )}
-
-                {/* Competencies (if graded) */}
-                {isGraded && (
-                    <div className="mt-4 pt-4 border-t border-slate-100">
-                        <div className="flex items-center gap-2 mb-3">
-                            <Award size={14} className="text-indigo-600" />
-                            <span className="text-[11px] font-bold text-slate-700 uppercase tracking-wide">Compétences Validées</span>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                            {['Analyse', 'Synthèse', 'Application'].map((comp, i) => (
-                                <span key={i} className="px-3 py-1 bg-indigo-50 text-indigo-700 text-[10px] font-semibold rounded-full border border-indigo-100">
-                                    {comp}
-                                </span>
-                            ))}
-                        </div>
-                    </div>
-                )}
-            </div>
+        <div>
+            <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest">{label}</p>
+            <p className="text-xl font-black text-white">{value}</p>
         </div>
-    );
-};
-
-// Metric Box Component
-const MetricBox = ({ icon, value, label, small }) => (
-    <div className="bg-slate-50 p-3 rounded-xl text-center border border-slate-100">
-        <div className="text-slate-400 mb-1 flex justify-center">{icon}</div>
-        <p className={`font-black text-slate-900 leading-none mb-1 ${small ? 'text-[10px]' : 'text-sm'}`}>
-            {small ? value.substring(0, 4) : value}
-        </p>
-        <p className="text-[9px] font-bold text-slate-400 uppercase tracking-tight">{label}</p>
     </div>
 );
 
-// Status Badge Component
-const StatusBadge = ({ submission }) => {
-    if (!submission) {
-        return (
-            <span className="px-4 py-2 rounded-full text-[10px] font-bold uppercase tracking-wide bg-amber-100 text-amber-700 border border-amber-200">
-                À Commencer
-            </span>
-        );
-    }
+const FilterPill = ({ label, active, onClick, icon }) => (
+    <button
+        onClick={onClick}
+        className={`px-5 py-2.5 rounded-xl font-bold text-xs uppercase tracking-wide transition-all flex items-center gap-2 whitespace-nowrap ${active
+            ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20'
+            : 'bg-white text-slate-500 border border-slate-200 hover:bg-slate-50'
+            }`}
+    >
+        {icon}
+        {label}
+    </button>
+);
 
-    if (submission.submissionStatus === 'GRADED') {
-        return (
-            <span className="px-4 py-2 rounded-full text-[10px] font-bold uppercase tracking-wide bg-emerald-100 text-emerald-700 border border-emerald-200 flex items-center gap-1.5">
-                <CheckCircle2 size={12} />
-                Évalué
-            </span>
-        );
-    }
+const AssessmentCard = ({ assessment, submission, isGraded, isPending, onStart, index }) => {
+    const getDifficultyBadge = () => {
+        const level = assessment.weekNumber || 1;
+        if (level <= 2) return { label: 'Fondamental', color: 'bg-emerald-100 text-emerald-700' };
+        if (level <= 4) return { label: 'Intermédiaire', color: 'bg-indigo-100 text-indigo-700' };
+        return { label: 'Expert', color: 'bg-rose-100 text-rose-700' };
+    };
+
+    const diff = getDifficultyBadge();
 
     return (
-        <span className="px-4 py-2 rounded-full text-[10px] font-bold uppercase tracking-wide bg-indigo-100 text-indigo-700 border border-indigo-200">
-            En Correction
-        </span>
+        <div className="bg-white rounded-[2rem] p-8 shadow-sm border border-slate-100 hover:shadow-xl hover:-translate-y-1 transition-all duration-500 group relative overflow-hidden">
+            <div className="absolute top-0 right-0 p-8 opacity-10 group-hover:opacity-20 transition-opacity">
+                <Trophy size={120} className="text-indigo-600 rotate-12" />
+            </div>
+
+            <div className="relative z-10">
+                <div className="flex justify-between items-start mb-6">
+                    <span className={`px-3 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest ${diff.color}`}>
+                        {diff.label}
+                    </span>
+                    {isGraded && (
+                        <div className="flex items-center gap-1 text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full border border-emerald-100">
+                            <CheckCircle2 size={12} />
+                            <span className="text-[10px] font-black uppercase tracking-widest">Validé</span>
+                        </div>
+                    )}
+                </div>
+
+                <h3 className="text-xl font-black text-slate-900 mb-3 group-hover:text-indigo-600 transition-colors">
+                    {assessment.title}
+                </h3>
+                <p className="text-slate-500 text-sm font-medium mb-8 line-clamp-2">
+                    {assessment.description || "Évaluez vos compétences avec ce module adaptatif propulsé par l'IA."}
+                </p>
+
+                <div className="flex items-center justify-between border-t border-slate-50 pt-6">
+                    <div className="flex gap-4 text-xs font-bold text-slate-400 uppercase tracking-wider">
+                        <span className="flex items-center gap-1"><Clock size={14} /> {assessment.durationMinutes} min</span>
+                        <span className="flex items-center gap-1"><Target size={14} /> {assessment.maxMarks} pts</span>
+                    </div>
+
+                    <button
+                        onClick={onStart}
+                        className={`w-12 h-12 rounded-full flex items-center justify-center transition-all ${isGraded
+                            ? 'bg-emerald-100 text-emerald-600 hover:bg-emerald-200'
+                            : 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 hover:scale-110'
+                            }`}
+                    >
+                        {isGraded ? <History size={20} /> : <PlayCircle size={24} />}
+                    </button>
+                </div>
+            </div>
+        </div>
     );
 };
 

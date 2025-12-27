@@ -40,3 +40,20 @@ class RecommendationResponse(BaseModel):
 
 # Note: Grading models removed to match official OpenAPI spec
 # Use local grading in Frontend for immediate response
+
+class QuizRequest(BaseModel):
+    """Request model for quiz generation."""
+    module_code: str = Field(..., description="Subject code or topic for the quiz")
+    difficulty: str = Field("Medium", description="Difficulty level (Easy, Medium, Hard)")
+
+class QuizQuestion(BaseModel):
+    """Model for a single quiz question."""
+    id: int
+    question: str
+    options: List[str]
+    correctAnswer: int = Field(..., description="Index of the correct option (0-3)")
+
+class QuizResponse(BaseModel):
+    """Response model for generated quiz."""
+    module_code: str
+    questions: List[QuizQuestion]

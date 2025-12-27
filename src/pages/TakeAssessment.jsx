@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
+import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { assessmentService } from '../services/assessmentService';
 import { userService } from '../services/userService';
 import {
@@ -13,7 +13,11 @@ import {
     Zap,
     BrainCircuit,
     Sparkles,
-    ShieldCheck
+    ShieldCheck,
+    LayoutGrid,
+    SearchX,
+    FileText,
+    Eye
 } from 'lucide-react';
 
 import { analyticsService } from '../services/analyticsService';
@@ -21,26 +25,105 @@ import { analyticsService } from '../services/analyticsService';
 const TakeAssessment = () => {
     const { assessmentId } = useParams();
     const navigate = useNavigate();
+    const location = useLocation();
     const [assessment, setAssessment] = useState(null);
     const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
     const [timeRemaining, setTimeRemaining] = useState(0);
-    const [answers, setAnswers] = useState({});
+    const [answers, setAnswers] = useState({}); // Stores answers: { qIdx: selectedIdx } for QCM, { qIdx: [idx1, idx2] } for QMR
+    const [markedForReview, setMarkedForReview] = useState([]);
     const [submitted, setSubmitted] = useState(false);
     const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
     const [showReview, setShowReview] = useState(false);
+    const [showFullReview, setShowFullReview] = useState(false);
     const [gradingResult, setGradingResult] = useState(null);
+    const [recommendations, setRecommendations] = useState([]);
+    const [questions, setQuestions] = useState([]);
 
     useEffect(() => {
         const loadData = async () => {
             try {
-                const [assessmentData, userData] = await Promise.all([
-                    assessmentService.getAssessmentById(assessmentId),
-                    userService.getMe()
-                ]);
+                // --- AI-GENERATED QUIZ MODE (Ephemeral) ---
+                if (assessmentId === 'ai-generated') {
+                    if (location.state?.assessment) {
+                        console.log("Loading AI-Generated Assessment from State");
+                        const aiAss = location.state.assessment;
+                        setAssessment(aiAss);
+
+                        // Ensure options exist for shuffling UI
+                        const qs = (aiAss.questions || []).map(q => ({
+                            ...q,
+                            shuffledOptions: q.options || []
+                        }));
+
+                        setQuestions(qs);
+                        setTimeRemaining((aiAss.durationMinutes || 30) * 60);
+                        setLoading(false);
+                        return;
+                    }
+                }
+
+                // --- STANDARD MODE (Backend) ---
+                const assessmentData = await assessmentService.getAssessmentById(assessmentId);
+                let userData = null;
+                try {
+                    userData = await userService.getMe();
+                } catch (e) {
+                    console.warn("User not authenticated or error fetching user");
+                }
+
+                // Check and Populate Questions
+                let rawQuestions = assessmentData.questions || [];
+
+                // AUTO-GENERATION if empty
+                if (rawQuestions.length === 0) {
+                    console.log("🤖 Quiz Vide détecté : Génération IA en cours...", assessmentData.title);
+                    try {
+                        const aiQuiz = await analyticsService.generateQuiz(assessmentData.title || "General");
+                        if (aiQuiz?.questions?.length > 0) {
+                            rawQuestions = aiQuiz.questions;
+                            assessmentData.questions = rawQuestions;
+                        }
+                    } catch (err) {
+                        console.warn("⚠️ Echec génération IA:", err);
+                    }
+                }
+
                 setAssessment(assessmentData);
                 setUser(userData);
-                setTimeRemaining(assessmentData.durationMinutes * 60);
+
+                // --- V3 ENHANCED LOGIC: Randomization & Bank ---
+                let processedQuestions = [...rawQuestions];
+
+                // 1. Shuffling Pool
+                if (assessmentData.shuffle && processedQuestions.length > 0) {
+                    processedQuestions.sort(() => Math.random() - 0.5);
+                }
+
+                // 2. Bank Selection
+                const displayCount = parseInt(assessmentData.displayCount);
+                if (!isNaN(displayCount) && displayCount > 0 && displayCount < processedQuestions.length) {
+                    processedQuestions = processedQuestions.slice(0, displayCount);
+                }
+
+                // 3. Option Shuffling & Metadata
+                processedQuestions = processedQuestions.map(q => {
+                    const opts = q.options || [];
+                    return {
+                        ...q,
+                        shuffledOptions: (assessmentData.shuffle && opts.length > 0)
+                            ? [...opts].sort(() => Math.random() - 0.5)
+                            : opts
+                    };
+                });
+
+                setQuestions(processedQuestions);
+
+                // Initialize timer if not already set
+                if (timeRemaining === 0) {
+                    setTimeRemaining((assessmentData.durationMinutes || 30) * 60);
+                }
+
             } catch (error) {
                 console.error("Error loading assessment:", error);
             } finally {
@@ -51,7 +134,7 @@ const TakeAssessment = () => {
     }, [assessmentId]);
 
     useEffect(() => {
-        if (timeRemaining <= 0 || submitted) return;
+        if (timeRemaining <= 0 || submitted || questions.length === 0) return;
         const timer = setInterval(() => {
             setTimeRemaining(prev => {
                 if (prev <= 1) {
@@ -62,7 +145,7 @@ const TakeAssessment = () => {
             });
         }, 1000);
         return () => clearInterval(timer);
-    }, [timeRemaining, submitted]);
+    }, [timeRemaining, submitted, questions.length]);
 
     const formatTime = (seconds) => {
         const mins = Math.floor(seconds / 60);
@@ -70,7 +153,8 @@ const TakeAssessment = () => {
         return `${mins}:${secs.toString().padStart(2, '0')}`;
     };
 
-    const questions = assessment?.questions || [];
+    // Helper to allow accessing current question safely
+    const currentQuestion = (questions && questions.length > 0) ? questions[currentQuestionIndex] : null;
 
     const handleSubmit = async () => {
         if (submitted || questions.length === 0) return;
@@ -80,14 +164,28 @@ const TakeAssessment = () => {
             let correctCount = 0;
             const detailedAnswers = questions.map((q, idx) => {
                 const studentAnswer = answers[idx];
-                const correctAnswer = q.correct_answer !== undefined ? q.correct_answer : q.correctAnswer;
-                const isCorrect = studentAnswer === correctAnswer;
+                const originalCorrectAnswer = q.correct_answer !== undefined ? q.correct_answer : q.correctAnswer;
+                const originalCorrectAnswers = q.correct_answers || [];
+
+                let isCorrect = false;
+
+                if (q.type === 'QMR') {
+                    // Check if arrays match
+                    const studentSet = new Set(studentAnswer || []);
+                    const correctSet = new Set(originalCorrectAnswers);
+                    isCorrect = studentSet.size === correctSet.size && [...studentSet].every(val => correctSet.has(val));
+                } else {
+                    // QCM or TF
+                    isCorrect = studentAnswer === originalCorrectAnswer;
+                }
+
                 if (isCorrect) correctCount++;
                 return {
                     questionId: q.id || idx,
                     studentAnswer,
                     isCorrect,
-                    correctAnswer: correctAnswer
+                    type: q.type,
+                    correctAnswer: q.type === 'QMR' ? originalCorrectAnswers : originalCorrectAnswer
                 };
             });
 
@@ -106,21 +204,36 @@ const TakeAssessment = () => {
                 percentage: percentage,
                 feedback: feedback,
                 performance_level: performanceLevel,
-                ai_analysis: `Analyse locale : {correctCount} réponses correctes sur {totalQuestions}.`
+                ai_analysis: `Analyse locale : ${correctCount} réponses correctes sur ${totalQuestions}.`
             });
 
-            const submissionData = {
-                studentId: user.id,
-                assessmentId: parseInt(assessmentId),
-                marksObtained: Math.round(score * 10) / 10,
-                submissionStatus: 'GRADED',
-                submittedAt: new Date().toISOString(),
-                gradedAt: new Date().toISOString(),
-                feedback: feedback,
-                answers: JSON.stringify(detailedAnswers)
-            };
+            // --- PERSISTENCE LOGIC ---
+            // If it's a real assessment (numeric ID), we submit to backend
+            // If it's AI-generated practice, we keep it client-side only
+            if (assessmentId !== 'ai-generated') {
+                const submissionData = {
+                    studentId: user.id || 0,
+                    assessmentId: parseInt(assessmentId),
+                    marksObtained: Math.round(score * 10) / 10,
+                    submissionStatus: 'GRADED',
+                    submittedAt: new Date().toISOString(),
+                    gradedAt: new Date().toISOString(),
+                    feedback: feedback,
+                    answers: JSON.stringify(detailedAnswers)
+                };
+                console.log("AI Practice Mode: Results kept locally.");
+            }
 
-            await assessmentService.submitAssessment(submissionData);
+            // --- V3 AI RECOMMENDATIONS ---
+            if (percentage < 70) {
+                try {
+                    const recs = await analyticsService.getRecommendations(user?.id || 0);
+                    setRecommendations(recs || []);
+                } catch (err) {
+                    console.warn("Could not fetch recommendations");
+                }
+            }
+
             setSubmitted(true);
         } catch (error) {
             console.error("Submission failed:", error);
@@ -133,6 +246,14 @@ const TakeAssessment = () => {
     if (loading) return (
         <div className="flex h-screen items-center justify-center bg-slate-900">
             <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-indigo-500"></div>
+        </div>
+    );
+
+    if (!assessment) return (
+        <div className="flex h-screen items-center justify-center bg-slate-950 flex-col gap-4">
+            <AlertCircle size={48} className="text-rose-500" />
+            <h2 className="text-white text-xl font-bold">Évaluation introuvable</h2>
+            <button onClick={() => navigate(-1)} className="text-slate-400 hover:text-white underline">Retour</button>
         </div>
     );
 
@@ -217,23 +338,90 @@ const TakeAssessment = () => {
                         </div>
                     </div>
 
+                    {recommendations.length > 0 && !passed && (
+                        <div className="w-full mb-12 animate-in zoom-in duration-700">
+                            <div className="flex items-center gap-2 mb-6 justify-center">
+                                <Sparkles className="text-amber-400" size={20} />
+                                <h4 className="text-sm font-black text-white uppercase tracking-[0.2em]">Recommandations de l'IA</h4>
+                            </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                {recommendations.slice(0, 2).map((rec, rIdx) => (
+                                    <div key={rIdx} className="bg-white/5 border border-white/10 p-5 rounded-3xl flex items-center justify-between group hover:bg-white/10 transition-all cursor-pointer" onClick={() => navigate(`/course/${rec.id}`)}>
+                                        <div className="flex items-center gap-4">
+                                            <div className="h-10 w-10 rounded-xl bg-indigo-500/20 flex items-center justify-center text-indigo-400">
+                                                <BookOpen size={20} />
+                                            </div>
+                                            <div className="text-left">
+                                                <p className="text-[10px] font-black text-indigo-400 uppercase tracking-widest">{rec.category || "Module"}</p>
+                                                <p className="text-sm font-bold text-white line-clamp-1">{rec.title}</p>
+                                            </div>
+                                        </div>
+                                        <ChevronRight size={18} className="text-slate-600 group-hover:text-white transition-all" />
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+
                     <div className="flex gap-6 w-full max-w-lg justify-center">
+                        <button
+                            onClick={() => setShowFullReview(!showFullReview)}
+                            className="flex-1 bg-white/10 hover:bg-white/20 text-white py-5 rounded-2xl font-black text-xs uppercase tracking-[0.2em] transition-all active:scale-95 border border-white/10 flex items-center justify-center gap-2"
+                        >
+                            <Eye size={18} /> {showFullReview ? "Masquer Détails" : "Voir Correction"}
+                        </button>
                         {passed ? (
                             <button
                                 onClick={() => navigate(-1)}
                                 className="flex-1 bg-emerald-500 hover:bg-emerald-400 text-white py-5 rounded-2xl font-black text-xs uppercase tracking-[0.2em] transition-all active:scale-95 shadow-[0_10px_40px_rgba(16,185,129,0.2)]"
                             >
-                                Quitter & Continuer
+                                Quitter
                             </button>
                         ) : (
                             <button
                                 onClick={handleRetry}
                                 className="flex-1 bg-white hover:bg-rose-50 text-rose-600 py-5 rounded-2xl font-black text-xs uppercase tracking-[0.2em] transition-all active:scale-95 shadow-[0_10px_40px_rgba(255,255,255,0.1)] flex items-center justify-center gap-2"
                             >
-                                <Zap size={18} /> Réessayer le Test
+                                <Zap size={18} /> Réessayer
                             </button>
                         )}
                     </div>
+
+                    {showFullReview && (
+                        <div className="mt-16 w-full space-y-6 text-left animate-in fade-in slide-in-from-top-4 duration-500">
+                            <h3 className="text-2xl font-black text-white uppercase tracking-wider flex items-center gap-3">
+                                <FileText className="text-indigo-400" /> Correction Détaillée
+                            </h3>
+                            <div className="space-y-4 max-h-[500px] overflow-y-auto pr-4 custom-scrollbar">
+                                {questions.map((q, idx) => {
+                                    const userAnswer = answers[idx];
+                                    const correctAnswer = q.correct_answer !== undefined ? q.correct_answer : q.correctAnswer;
+                                    const isCorrect = userAnswer === correctAnswer;
+
+                                    return (
+                                        <div key={idx} className={`p-6 rounded-3xl border ${isCorrect ? 'border-emerald-500/20 bg-emerald-500/5' : 'border-rose-500/20 bg-rose-500/5'} backdrop-blur-sm`}>
+                                            <p className="text-white font-bold mb-4 flex items-center gap-3">
+                                                <span className={`h-6 w-6 rounded-lg ${isCorrect ? 'bg-emerald-500' : 'bg-rose-500'} text-xs flex items-center justify-center shrink-0`}>{idx + 1}</span>
+                                                {q.question}
+                                            </p>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                {q.options.map((opt, oIdx) => (
+                                                    <div key={oIdx} className={`px-4 py-3 rounded-xl text-xs font-bold border ${oIdx === correctAnswer ? 'bg-emerald-500/20 border-emerald-500 text-emerald-400' :
+                                                        oIdx === userAnswer ? 'bg-rose-500/20 border-rose-500 text-rose-400' :
+                                                            'bg-white/5 border-white/10 text-slate-500'
+                                                        }`}>
+                                                        {opt}
+                                                        {oIdx === correctAnswer && " (Correct)"}
+                                                        {oIdx === userAnswer && !isCorrect && " (Votre réponse)"}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
         );
@@ -280,14 +468,19 @@ const TakeAssessment = () => {
                             <button
                                 key={i}
                                 onClick={() => setCurrentQuestionIndex(i)}
-                                className={`h-16 rounded-2xl border-2 font-black transition-all flex items-center justify-center text-sm ${i === currentQuestionIndex
+                                className={`h-16 rounded-2xl border-2 font-black transition-all flex items-center justify-center text-sm relative ${i === currentQuestionIndex
                                     ? 'bg-indigo-600 border-indigo-600 text-white shadow-xl shadow-indigo-600/30 scale-105'
-                                    : answers[i] !== undefined
-                                        ? 'bg-white border-emerald-500/30 text-emerald-600'
-                                        : 'bg-white border-slate-100 text-slate-400 hover:border-slate-300'
+                                    : markedForReview.includes(i)
+                                        ? 'bg-amber-50 border-amber-200 text-amber-600 shadow-lg shadow-amber-500/10'
+                                        : answers[i] !== undefined
+                                            ? 'bg-white border-emerald-500/30 text-emerald-600'
+                                            : 'bg-white border-slate-100 text-slate-400 hover:border-slate-300'
                                     }`}
                             >
                                 {i + 1}
+                                {markedForReview.includes(i) && (
+                                    <div className="absolute -top-1 -right-1 h-4 w-4 bg-amber-500 rounded-full border-2 border-white"></div>
+                                )}
                             </button>
                         ))}
                     </div>
@@ -319,6 +512,20 @@ const TakeAssessment = () => {
                             <div className="space-y-4">
                                 <div className="flex items-center gap-3">
                                     <span className="px-4 py-1.5 bg-indigo-600 text-white text-[10px] font-black rounded-full uppercase tracking-widest shadow-lg shadow-indigo-600/20">Question {currentQuestionIndex + 1}</span>
+                                    <button
+                                        onClick={() => {
+                                            const idx = currentQuestionIndex;
+                                            setMarkedForReview(prev =>
+                                                prev.includes(idx) ? prev.filter(i => i !== idx) : [...prev, idx]
+                                            );
+                                        }}
+                                        className={`px-4 py-1.5 text-[10px] font-black rounded-full uppercase tracking-widest transition-all border ${markedForReview.includes(currentQuestionIndex)
+                                            ? 'bg-amber-500 border-amber-500 text-white shadow-lg shadow-amber-500/20'
+                                            : 'bg-white border-slate-200 text-slate-400 hover:border-amber-400 hover:text-amber-500'
+                                            }`}
+                                    >
+                                        Marquer pour révision
+                                    </button>
                                     <div className="h-0.5 flex-1 bg-slate-100 rounded-full">
                                         <div className="h-full bg-indigo-600 rounded-full transition-all duration-1000 ease-out" style={{ width: `${((currentQuestionIndex + 1) / questions.length) * 100}%` }}></div>
                                     </div>
@@ -329,34 +536,63 @@ const TakeAssessment = () => {
                             </div>
 
                             <div className="space-y-6">
-                                {currentQuestion.options.map((option, idx) => (
-                                    <button
-                                        key={idx}
-                                        onClick={() => setAnswers({ ...answers, [currentQuestionIndex]: idx })}
-                                        className={`w-full group relative text-left p-8 rounded-[2.5rem] border-2 transition-all duration-500 hover:-translate-y-1 ${answers[currentQuestionIndex] === idx
-                                            ? 'border-indigo-600 bg-white shadow-2xl shadow-indigo-600/10'
-                                            : 'border-slate-100 bg-slate-50/50 hover:bg-white hover:border-slate-300'
-                                            }`}
-                                    >
-                                        <div className="flex items-center gap-6">
-                                            <div className={`h-12 w-12 rounded-2xl border-2 flex items-center justify-center transition-all duration-500 font-black text-sm ${answers[currentQuestionIndex] === idx
-                                                ? 'bg-indigo-600 border-indigo-600 text-white rotate-[360deg] shadow-lg'
-                                                : 'border-slate-200 text-slate-400 group-hover:border-indigo-400'
-                                                }`}>
-                                                {String.fromCharCode(65 + idx)}
-                                            </div>
-                                            <span className={`text-lg lg:text-xl font-bold ${answers[currentQuestionIndex] === idx ? 'text-indigo-950' : 'text-slate-600'}`}>
-                                                {option}
-                                            </span>
-                                            {answers[currentQuestionIndex] === idx && (
-                                                <div className="ml-auto p-2 bg-indigo-50 rounded-xl text-indigo-600 animate-in zoom-in">
-                                                    <CheckCircle2 size={24} />
+                                {currentQuestion.shuffledOptions.map((option, sIdx) => {
+                                    // Map shuffled index back to original index for state storage
+                                    const originalIdx = currentQuestion.options.indexOf(option);
+                                    const isSelected = currentQuestion.type === 'QMR'
+                                        ? (answers[currentQuestionIndex] || []).includes(originalIdx)
+                                        : answers[currentQuestionIndex] === originalIdx;
+
+                                    return (
+                                        <button
+                                            key={sIdx}
+                                            onClick={() => {
+                                                if (currentQuestion.type === 'QMR') {
+                                                    const prev = answers[currentQuestionIndex] || [];
+                                                    const next = prev.includes(originalIdx)
+                                                        ? prev.filter(i => i !== originalIdx)
+                                                        : [...prev, originalIdx];
+                                                    setAnswers({ ...answers, [currentQuestionIndex]: next });
+                                                } else {
+                                                    setAnswers({ ...answers, [currentQuestionIndex]: originalIdx });
+                                                }
+                                            }}
+                                            className={`w-full group relative text-left p-6 lg:p-8 rounded-[2rem] lg:rounded-[2.5rem] border-2 transition-all duration-500 hover:-translate-y-1 ${isSelected
+                                                ? 'border-indigo-600 bg-white shadow-2xl shadow-indigo-600/10'
+                                                : 'border-slate-100 bg-slate-50/50 hover:bg-white hover:border-slate-300'
+                                                }`}
+                                        >
+                                            <div className="flex items-center gap-6">
+                                                <div className={`h-10 w-10 lg:h-12 lg:w-12 rounded-2xl border-2 flex items-center justify-center transition-all duration-500 font-black text-sm ${isSelected
+                                                    ? 'bg-indigo-600 border-indigo-600 text-white rotate-[360deg] shadow-lg'
+                                                    : 'border-slate-200 text-slate-400 group-hover:border-indigo-400'
+                                                    }`}>
+                                                    {String.fromCharCode(65 + sIdx)}
                                                 </div>
-                                            )}
-                                        </div>
-                                    </button>
-                                ))}
+                                                <span className={`text-base lg:text-lg font-bold ${isSelected ? 'text-indigo-950' : 'text-slate-600'}`}>
+                                                    {option}
+                                                </span>
+                                                {isSelected && (
+                                                    <div className="ml-auto p-2 bg-indigo-50 rounded-xl text-indigo-600 animate-in zoom-in">
+                                                        <CheckCircle2 size={24} />
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </button>
+                                    );
+                                })}
                             </div>
+
+                            {currentQuestion.explanation && submitted && (
+                                <div className="p-6 bg-indigo-50 border border-indigo-100 rounded-3xl animate-in slide-in-from-left duration-500">
+                                    <p className="text-xs font-black text-indigo-600 uppercase tracking-widest mb-2 flex items-center gap-2">
+                                        <Sparkles size={14} /> Explication Pédagogique
+                                    </p>
+                                    <p className="text-sm text-indigo-900 leading-relaxed font-medium italic">
+                                        "{currentQuestion.explanation}"
+                                    </p>
+                                </div>
+                            )}
 
                             <div className="pt-12 flex items-center justify-between border-t border-slate-100">
                                 <button
