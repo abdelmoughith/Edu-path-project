@@ -1,0 +1,6 @@
+body {
+  margin: 0;
+  font-family: sans-serif;
+  background-color: white; /* Force le fond blanc pour voir le texte noir */
+  color: black;
+}
