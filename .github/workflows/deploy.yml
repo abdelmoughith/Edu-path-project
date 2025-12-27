@@ -1,0 +1,24 @@
+name: Deploy front-end
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up SSH
+        uses: webfactory/ssh-agent@v0.9.1
+        with:
+          ssh-private-key: ${{ secrets.VPS_SSH_KEY }}
+
+      - name: Deploy on VPS
+        run: |
+          ssh -o StrictHostKeyChecking=no root@148.230.126.194 "
+          cd /opt/microservices/Edu-path-project &&
+          git pull origin main &&
+          docker compose build front &&
+          docker compose up -d front
+          "
