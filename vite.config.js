@@ -6,26 +6,10 @@ export default defineConfig({
   plugins: [react()],
   server: {
     proxy: {
-      '/api/users': {
-        target: 'http://localhost:8089',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/users/, '/users'),
-      },
-      '/api/courses': {
-        target: 'http://localhost:8089',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/courses/, '/courses'),
-      },
-      '/api/activities': {
-        target: 'http://localhost:8089',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/activities/, '/activities'),
-      },
-      '/api/ai': {
-        target: 'http://127.0.0.1:8000',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/ai/, ''),
-      },
+      '/api/users': { target: 'http://api-gateway:8089', rewrite: path => path.replace(/^\/api\/users/, '/users') },
+      '/api/courses': { target: 'http://api-gateway:8089', rewrite: path => path.replace(/^\/api\/courses/, '/courses') },
+      '/api/activities': { target: 'http://api-gateway:8089', rewrite: path => path.replace(/^\/api/activities/, '/activities') },
+      '/api/ai': { target: 'http://edupath-ml:8000', rewrite: path => path.replace(/^\/api\/ai/, ''), changeOrigin: true },
     },
   },
 })

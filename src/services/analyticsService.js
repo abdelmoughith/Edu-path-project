@@ -6,7 +6,7 @@ import axios from 'axios';
  * Bypasses the main gateway.
  */
 const aiApi = axios.create({
-    baseURL: 'http://127.0.0.1:8001',
+    baseURL: 'http://edupath-ml:8000', // inside Docker
     headers: { 'Content-Type': 'application/json' }
 });
 
